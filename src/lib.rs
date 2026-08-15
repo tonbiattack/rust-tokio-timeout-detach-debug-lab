@@ -23,7 +23,7 @@ pub async fn run_job_with_deadline(
     worker_completed: oneshot::Sender<()>,
     deadline: Duration,
 ) -> Result<(), RunError> {
-    let handle = tokio::spawn(async move {
+    let mut handle = tokio::spawn(async move {
         worker_started.wait().await;
         eprintln!("[worker] 起動を通知し、制御メッセージを待機します");
         let _ = release_worker.await;
@@ -35,11 +35,14 @@ pub async fn run_job_with_deadline(
         let _ = worker_completed.send(());
     });
 
-    match timeout(deadline, handle).await {
+    match timeout(deadline, &mut handle).await {
         Ok(Ok(())) => Ok(()),
         Ok(Err(_)) => Err(RunError::WorkerPanicked),
         Err(_) => {
-            eprintln!("[deadline] 期限切れとして呼び出し元へ返します");
+            eprintln!("[deadline] 期限切れを検知し、ワーカーを中断します");
+            handle.abort();
+            let cancellation = handle.await;
+            eprintln!("[deadline] ワーカー中断の完了: {cancellation:?}");
             Err(RunError::DeadlineExceeded)
         }
     }
